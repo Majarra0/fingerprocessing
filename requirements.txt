@@ -1,0 +1,11 @@
+fastapi
+uvicorn
+pillow
+tqdm
+numpy
+matplotlib
+scikit-learn
+opencv-python
+albumentations
+tensorflow>=2.8
+keras
