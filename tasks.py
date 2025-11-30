@@ -3,14 +3,13 @@ from PIL import Image, ImageFilter, ImageEnhance
 import io
 import os
 import uuid
+import numpy as np
+import cv2
 from datetime import datetime
 
-# Configure Celery
-celery_app = Celery(
-    "tasks",
-    broker="redis://localhost:6379/0",  # Redis URL
-    backend="redis://localhost:6379/0"
-)
+# Configure Celery (allows overriding via REDIS_URL env var)
+REDIS_URL = os.getenv("REDIS_URL", "redis://localhost:6379/0")
+celery_app = Celery("tasks", broker=REDIS_URL, backend=REDIS_URL)
 
 @celery_app.task
 def process_fingerprint(file_content, output_folder="processed_images", filename_prefix="enhanced"):
@@ -36,6 +35,12 @@ def process_fingerprint(file_content, output_folder="processed_images", filename
         # Convert to grayscale if not already (common for fingerprints)
         if img.mode != 'L':
             img = img.convert('L')
+
+        # Apply CLAHE to boost ridge contrast without over-amplifying noise
+        clahe = cv2.createCLAHE(clipLimit=2.0, tileGridSize=(8, 8))
+        img_array = np.array(img)
+        img_array = clahe.apply(img_array)
+        img = Image.fromarray(img_array)
         
         # Apply multiple enhancement techniques
         enhanced_img = img.copy()
@@ -80,6 +85,7 @@ def process_fingerprint(file_content, output_folder="processed_images", filename
             "output_folder": output_folder,
             "enhancements_applied": [
                 "Converted to grayscale",
+                "Applied CLAHE contrast boost",
                 "Sharpened",
                 "Enhanced contrast (+50%)",
                 "Enhanced brightness (+10%)",
