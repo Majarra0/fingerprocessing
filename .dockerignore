@@ -1,0 +1,17 @@
+__pycache__/
+*.py[cod]
+*.h5
+*.pth
+*.ckpt
+*.log
+*.sqlite3
+*.db
+.env
+.venv
+.git
+.gitignore
+node_modules
+processed_images
+batch_processed
+fingerprint_classifier_model*
+cleanfp
