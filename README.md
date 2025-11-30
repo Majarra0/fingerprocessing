@@ -21,21 +21,24 @@ FastAPI + Celery service for enhancing fingerprint images and handling batch job
    docker-compose up --build
    ```
    Services: `api` on port 8000, `worker` for Celery, `redis`.
+   (The default image installs only the runtime deps; training extras are opt-in. To bake them in, run `docker compose build --build-arg INSTALL_TRAINING=true`.)
 
-2) Open docs: http://localhost:8000/docs
+2) Open the web UI: http://localhost:8000/ (upload files, watch job status, download results)
 
-3) Upload images:
+3) Open docs: http://localhost:8000/docs
+
+4) Upload images:
    ```bash
    curl -X POST "http://localhost:8000/upload/" \
      -F "files=@/path/to/img1.png" -F "files=@/path/to/img2.jpg"
    ```
 
-4) Check job status:
+5) Check job status:
    ```bash
    curl http://localhost:8000/status/<job_id>
    ```
 
-5) Download files:
+6) Download files:
    ```bash
    curl -O http://localhost:8000/file/processed_images/<filename>
    ```
@@ -51,6 +54,7 @@ FastAPI + Celery service for enhancing fingerprint images and handling batch job
 ```bash
 python -m venv .venv && source .venv/bin/activate
 pip install -r requirements.txt
+# For training/distortion utilities add: pip install -r requirements-train.txt
 export REDIS_URL=redis://localhost:6379/0  # ensure Redis is running
 # terminal 1
 uvicorn main:app --reload --host 0.0.0.0 --port 8000
@@ -76,7 +80,7 @@ curl http://localhost:8000/status/<job_id>
 ## Notes on the classifier & data tools
 - Training script expects dataset at `fpds/` with class subfolders.
 - Distortion generator can synthesize multiple distortion types to augment data.
-- TensorFlow is included; CPU wheels are used by default (no GPU in Docker image).
+- Training deps (TensorFlow, scikit-learn, matplotlib, etc.) live in `requirements-train.txt` and are not installed in the default Docker image to avoid slow/fragile builds on Arch/ARM. Install them locally or rebuild with `--build-arg INSTALL_TRAINING=true` if you need the training utilities in a container.
 
 ## Next steps
 - Add model inference endpoint if you want classification served alongside enhancement.

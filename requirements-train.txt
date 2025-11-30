@@ -1,0 +1,9 @@
+-r requirements.txt
+
+# Data augmentation + training extras (not needed for the API/worker image)
+albumentations
+tqdm
+matplotlib
+scikit-learn
+tensorflow>=2.8
+keras

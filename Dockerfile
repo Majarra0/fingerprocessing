@@ -17,8 +17,13 @@ RUN apt-get update \
     && pip install --upgrade pip \
     && rm -rf /var/lib/apt/lists/*
 
-COPY requirements.txt ./
-RUN pip install -r requirements.txt
+ARG INSTALL_TRAINING=false
+COPY requirements.txt requirements-train.txt ./
+RUN if [ "$INSTALL_TRAINING" = "true" ]; then \
+      pip install -r requirements-train.txt; \
+    else \
+      pip install -r requirements.txt; \
+    fi
 
 COPY . .
 

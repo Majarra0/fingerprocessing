@@ -11,72 +11,65 @@ from datetime import datetime
 REDIS_URL = os.getenv("REDIS_URL", "redis://localhost:6379/0")
 celery_app = Celery("tasks", broker=REDIS_URL, backend=REDIS_URL)
 
-@celery_app.task
-def process_fingerprint(file_content, output_folder="processed_images", filename_prefix="enhanced"):
+def _progress_callback(progress_fn, step, detail=None, state="PROGRESS"):
+    if not progress_fn:
+        return
+    meta = {"step": step}
+    if detail:
+        meta.update(detail)
+    try:
+        progress_fn(state=state, meta=meta)
+    except Exception:
+        pass
+
+
+def _enhance_fingerprint(file_content, output_folder="processed_images", filename_prefix="enhanced", progress_fn=None):
     """
-    Process and enhance fingerprint images with multiple enhancement techniques
-    
-    Args:
-        file_content: Image file content as string (encoded with latin1)
-        output_folder: Directory to save processed images (default: "processed_images")
-        filename_prefix: Prefix for output filename (default: "enhanced")
-    
-    Returns:
-        dict: Processing results including file path and applied enhancements
+    Process and enhance fingerprint images with multiple enhancement techniques.
+    Allows optional progress_fn for Celery state updates.
     """
     try:
-        # Create output directory if it doesn't exist
         os.makedirs(output_folder, exist_ok=True)
-        
-        # Convert string back to bytes
+
+        _progress_callback(progress_fn, "decode")
         file_bytes = file_content.encode('latin1')
         img = Image.open(io.BytesIO(file_bytes))
-        
-        # Convert to grayscale if not already (common for fingerprints)
+
         if img.mode != 'L':
             img = img.convert('L')
 
-        # Apply CLAHE to boost ridge contrast without over-amplifying noise
+        _progress_callback(progress_fn, "clahe")
         clahe = cv2.createCLAHE(clipLimit=2.0, tileGridSize=(8, 8))
         img_array = np.array(img)
         img_array = clahe.apply(img_array)
         img = Image.fromarray(img_array)
-        
-        # Apply multiple enhancement techniques
+
+        _progress_callback(progress_fn, "enhance")
         enhanced_img = img.copy()
-        
-        # 1. Sharpen the image
         enhanced_img = enhanced_img.filter(ImageFilter.SHARPEN)
-        
-        # 2. Enhance contrast
+
         contrast_enhancer = ImageEnhance.Contrast(enhanced_img)
-        enhanced_img = contrast_enhancer.enhance(1.5)  # Increase contrast by 50%
-        
-        # 3. Enhance brightness slightly
+        enhanced_img = contrast_enhancer.enhance(1.5)
+
         brightness_enhancer = ImageEnhance.Brightness(enhanced_img)
-        enhanced_img = brightness_enhancer.enhance(1.1)  # Increase brightness by 10%
-        
-        # 4. Apply unsharp mask for better edge definition
+        enhanced_img = brightness_enhancer.enhance(1.1)
+
         enhanced_img = enhanced_img.filter(ImageFilter.UnsharpMask(radius=1, percent=150, threshold=3))
-        
-        # 5. Reduce noise with a mild blur then sharpen again
         enhanced_img = enhanced_img.filter(ImageFilter.GaussianBlur(radius=0.5))
         enhanced_img = enhanced_img.filter(ImageFilter.SHARPEN)
-        
-        # Generate unique filename with timestamp
+
         timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
         unique_id = str(uuid.uuid4())[:8]
         filename = f"{filename_prefix}_{timestamp}_{unique_id}.bmp"
         output_path = os.path.join(output_folder, filename)
-        
-        # Save enhanced image
+
+        _progress_callback(progress_fn, "save", {"enhanced_image_path": output_path})
         enhanced_img.save(output_path, quality=95)
-        
-        # Also save original for comparison (optional)
+
         original_filename = f"original_{timestamp}_{unique_id}.bmp"
         original_path = os.path.join(output_folder, original_filename)
         img.save(original_path)
-        
+
         return {
             "status": "success",
             "message": "Image processed successfully",
@@ -94,7 +87,7 @@ def process_fingerprint(file_content, output_folder="processed_images", filename
             ],
             "processing_timestamp": timestamp
         }
-        
+
     except Exception as e:
         return {
             "status": "error",
@@ -103,10 +96,32 @@ def process_fingerprint(file_content, output_folder="processed_images", filename
             "original_image_path": None
         }
 
-@celery_app.task
-def batch_process_fingerprints(file_contents_list, output_folder="batch_processed", filename_prefix="batch_enhanced"):
+
+def _make_celery_progress(task):
+    def _progress(state="PROGRESS", meta=None):
+        try:
+            task.update_state(state=state, meta=meta or {})
+        except Exception:
+            pass
+    return _progress
+
+
+@celery_app.task(bind=True)
+def process_fingerprint(self, file_content, output_folder="processed_images", filename_prefix="enhanced"):
     """
-    Process multiple fingerprint images in batch
+    Celery task wrapper around the enhancement function with progress reporting.
+    """
+    progress_fn = _make_celery_progress(self)
+    _progress_callback(progress_fn, "start")
+    result = _enhance_fingerprint(file_content, output_folder, filename_prefix, progress_fn=progress_fn)
+    if isinstance(result, dict) and result.get("status") == "error":
+        _progress_callback(progress_fn, "error", {"message": result.get("message")}, state="FAILURE")
+    return result
+
+@celery_app.task(bind=True)
+def batch_process_fingerprints(self, file_contents_list, output_folder="batch_processed", filename_prefix="batch_enhanced"):
+    """
+    Process multiple fingerprint images in batch with progress reporting.
     
     Args:
         file_contents_list: List of image file contents
@@ -116,22 +131,37 @@ def batch_process_fingerprints(file_contents_list, output_folder="batch_processe
     Returns:
         dict: Batch processing results
     """
+    progress_fn = _make_celery_progress(self)
+    _progress_callback(progress_fn, "batch_start", {"total": len(file_contents_list)})
+
     results = []
     failed_count = 0
     success_count = 0
-    
-    # Create output directory
+
     os.makedirs(output_folder, exist_ok=True)
-    
+
     for i, file_content in enumerate(file_contents_list):
-        result = process_fingerprint(file_content, output_folder, f"{filename_prefix}_{i+1}")
+        _progress_callback(progress_fn, "item_start", {"index": i + 1, "total": len(file_contents_list)})
+        result = _enhance_fingerprint(
+            file_content,
+            output_folder,
+            f"{filename_prefix}_{i+1}",
+            progress_fn=lambda state="PROGRESS", meta=None: _progress_callback(
+                progress_fn,
+                (meta or {}).get("step", "item_progress"),
+                {"index": i + 1, "total": len(file_contents_list), **(meta or {})},
+                state=state
+            ),
+        )
         results.append(result)
-        
-        if result["status"] == "success":
+
+        if result.get("status") == "success":
             success_count += 1
         else:
             failed_count += 1
-    
+
+    _progress_callback(progress_fn, "batch_complete", {"successful": success_count, "failed": failed_count})
+
     return {
         "batch_status": "completed",
         "total_images": len(file_contents_list),

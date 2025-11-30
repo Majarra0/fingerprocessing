@@ -1,13 +1,7 @@
 fastapi
 uvicorn
 pillow
-tqdm
 numpy
-matplotlib
-scikit-learn
 opencv-python-headless
-albumentations
-tensorflow>=2.8
-keras
 celery[redis]
 python-multipart

@@ -35,6 +35,7 @@
 ## Training & data utilities
 - `fingerprint_distortion_generator.py` – generate distorted samples for augmentation; see script arguments within the file.
 - `fingerprint_distortion_classifier.py` – trains a transfer-learning classifier on dataset at `fpds/` (class subfolders). Saves model (`fingerprint_classifier_model*`) and training curves.
+- Training dependencies (TensorFlow, scikit-learn, etc.) live in `requirements-train.txt` and are not installed in the default API/worker image to keep builds light. Install them locally or rebuild the image with `--build-arg INSTALL_TRAINING=true` if you need the training tools in-container.
 
 ## Operational notes / TODOs
 - Current job metadata is stored in-memory; migrate to Redis/DB for multi-instance or restarts.

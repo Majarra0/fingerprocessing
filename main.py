@@ -1,6 +1,7 @@
 from fastapi import FastAPI, UploadFile, File, HTTPException, BackgroundTasks
 from fastapi.responses import JSONResponse, FileResponse
 from fastapi.middleware.cors import CORSMiddleware
+from fastapi.staticfiles import StaticFiles
 from tasks import process_fingerprint, batch_process_fingerprints, cleanup_old_images
 from typing import List, Optional
 import os
@@ -24,6 +25,18 @@ app.add_middleware(
 
 # Store task results temporarily (in production, use Redis or database)
 task_results = {}
+
+app.mount("/static", StaticFiles(directory="static"), name="static")
+
+
+@app.get("/", include_in_schema=False)
+async def serve_ui():
+    """Serve the bundled web UI."""
+    index_path = os.path.join("static", "index.html")
+    if not os.path.exists(index_path):
+        raise HTTPException(status_code=404, detail="UI not found")
+    return FileResponse(index_path)
+
 
 @app.post("/upload/")
 async def upload_fingerprints(
@@ -125,15 +138,28 @@ async def get_job_status(job_id: str):
     completed_tasks = []
     pending_tasks = []
     failed_tasks = []
+    task_states = []
     
     for task_id in task_ids:
         task = process_fingerprint.AsyncResult(task_id) if len(task_ids) == 1 else batch_process_fingerprints.AsyncResult(task_id)
-        
+        state_info = {"task_id": task_id, "state": task.state}
+        if task.info:
+            info = task.info if isinstance(task.info, dict) else {"detail": str(task.info)}
+            state_info["info"] = info
+        task_states.append(state_info)
+
         if task.ready():
             if task.successful():
+                result = task.result
+                if isinstance(result, dict) and result.get("status") == "error":
+                    failed_tasks.append({
+                        "task_id": task_id,
+                        "error": result.get("message", "Unknown error")
+                    })
+                    continue
                 completed_tasks.append({
                     "task_id": task_id,
-                    "result": task.result
+                    "result": result
                 })
             else:
                 failed_tasks.append({
@@ -155,7 +181,8 @@ async def get_job_status(job_id: str):
         "pending_tasks": len(pending_tasks),
         "failed_tasks": len(failed_tasks),
         "results": completed_tasks,
-        "errors": failed_tasks
+        "errors": failed_tasks,
+        "task_states": task_states
     }
 
 @app.get("/download/{job_id}")
