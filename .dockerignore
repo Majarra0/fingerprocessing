@@ -15,3 +15,4 @@ processed_images
 batch_processed
 fingerprint_classifier_model*
 cleanfp
+fingerprint_index

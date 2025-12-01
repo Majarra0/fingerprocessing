@@ -1,12 +1,13 @@
 # Fingerprint Processor
 
-FastAPI + Celery service for enhancing fingerprint images and handling batch jobs. Includes utilities for generating distorted fingerprints and training a classifier.
+FastAPI + Celery service for enhancing fingerprint images, handling batch jobs, and ultimately comparing a new fingerprint against a stored database to identify who it belongs to. The database is a set of per-fingerprint JSON descriptor files derived from processed images. Includes utilities for generating distorted fingerprints and training a classifier.
 
 ## Features
-- REST API for uploading, processing, listing, and downloading processed fingerprints
-- Asynchronous background processing via Celery + Redis
+- REST API for uploading, processing, listing, and downloading processed fingerprints (processed images feed the matching database)
+- Asynchronous background processing via Celery + Redis, plus a synchronous combined endpoint
 - Image enhancement pipeline (grayscale, CLAHE, sharpening, contrast/brightness, noise reduction)
 - Batch processing and cleanup task for old outputs
+- Fingerprint matching endpoint that compares an uploaded print to per-fingerprint JSON descriptors generated from processed images
 - Utilities for dataset distortion generation and classifier training (TensorFlow)
 
 ## Stack
@@ -16,24 +17,32 @@ FastAPI + Celery service for enhancing fingerprint images and handling batch job
 - TensorFlow/Keras, Albumentations, scikit-learn for training utilities
 
 ## Quickstart (Docker)
-1) Build and start the stack:
+1) Build and start the stack (Redis starts inside the compose stack; no separate Redis start needed):
    ```bash
    docker-compose up --build
    ```
-   Services: `api` on port 8000, `worker` for Celery, `redis`.
+   Services: `api` on port 8000, `worker` for Celery, `redis` (with a healthcheck so workers wait until Redis is ready).
    (The default image installs only the runtime deps; training extras are opt-in. To bake them in, run `docker compose build --build-arg INSTALL_TRAINING=true`.)
 
-2) Open the web UI: http://localhost:8000/ (upload files, watch job status, download results)
+2) Open docs: http://localhost:8000/docs
 
-3) Open docs: http://localhost:8000/docs
+3) Process and build per-fingerprint JSON descriptors in one call (synchronous):
+   ```bash
+   curl -X POST "http://localhost:8000/process-and-index/" \
+     -F "files=@/path/to/img1.png" \
+     -F "files=@/path/to/img2.jpg" \
+     -F "output_folder=processed_images" \
+     -F "filename_prefix=enhanced" \
+     -F "index_path=fingerprint_index"
+   ```
 
-4) Upload images:
+4) (Optional async flow) Upload images via Celery:
    ```bash
    curl -X POST "http://localhost:8000/upload/" \
      -F "files=@/path/to/img1.png" -F "files=@/path/to/img2.jpg"
    ```
 
-5) Check job status:
+5) Check job status (async flow):
    ```bash
    curl http://localhost:8000/status/<job_id>
    ```
@@ -43,12 +52,19 @@ FastAPI + Celery service for enhancing fingerprint images and handling batch job
    curl -O http://localhost:8000/file/processed_images/<filename>
    ```
 
+7) Match a fingerprint against the enrolled database (expects per-fingerprint JSON descriptors under `fingerprint_index/`):
+   ```bash
+   curl -X POST "http://localhost:8000/match/" \
+     -F "file=@/path/to/query_fingerprint.png"
+   ```
+
 ### Environment variables
 - `REDIS_URL` (default `redis://redis:6379/0` in Docker, `redis://localhost:6379/0` otherwise)
 - `OUTPUT_FOLDER` is optional per request (via API params)
 
 ### Volumes
 `processed_images` is mounted to persist outputs between runs (see `docker-compose.yml`). The build context ignores large data folders (e.g., `cleanfp`, processed outputs); mount them explicitly if needed.
+- `fingerprint_index/` contains per-fingerprint JSON descriptor files generated from `processed_images/` (ignored by git). The matching endpoint reads these files; rebuild by re-running `POST /process-and-index/` after adding new processed images.
 
 ## Local Run (without Docker)
 ```bash
@@ -63,11 +79,11 @@ celery -A tasks.celery_app worker --loglevel=info
 ```
 
 ## Project Layout
-- `main.py` – FastAPI endpoints for upload/status/download/cleanup
+- `main.py` – FastAPI endpoints for upload/status/download/cleanup, combined process+index endpoint, and matching
 - `tasks.py` – Celery tasks + image enhancement pipeline
 - `fingerprint_distortion_generator.py` – synthesize distorted fingerprints for training
 - `fingerprint_distortion_classifier.py` – transfer-learning classifier trainer (TensorFlow)
-- `cleanfp/` – sample clean fingerprints
+- `cleanfp/` – sample clean fingerprints for testing; for real deployments use your own source with clear naming per person to distinguish identities
 
 ## Testing the API quickly
 ```bash

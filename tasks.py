@@ -32,7 +32,7 @@ def _enhance_fingerprint(file_content, output_folder="processed_images", filenam
         os.makedirs(output_folder, exist_ok=True)
 
         _progress_callback(progress_fn, "decode")
-        file_bytes = file_content.encode('latin1')
+        file_bytes = file_content if isinstance(file_content, (bytes, bytearray)) else file_content.encode('latin1')
         img = Image.open(io.BytesIO(file_bytes))
 
         if img.mode != 'L':
